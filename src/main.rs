@@ -1,5 +1,6 @@
 use bluer::{gatt::remote::Characteristic, AdapterEvent, Address, Device, Result, Uuid};
 use futures::{pin_mut, StreamExt};
+use std::env;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::{
@@ -7,9 +8,16 @@ use tokio::{
     time::sleep,
 };
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> bluer::Result<()> {
-    env_logger::init();
+use axum::{routing::get, Router};
+
+async fn connect_device() -> bluer::Result<()> {
+    let turn_on = env::args().any(|arg| arg == "--on");
+    let turn_off = env::args().any(|arg| arg == "--off");
+
+    if !turn_on && !turn_off {
+        return Ok(());
+    }
+
     let session = bluer::Session::new().await?;
     let adapter = session.default_adapter().await?;
     adapter.set_powered(true).await?;
@@ -26,8 +34,6 @@ async fn main() -> bluer::Result<()> {
         0x33, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x32,
     ];
-    // let test = "aa010000000000000000000000000000000000ab".to_string();
-    // println!("{:02x?}", test.as_bytes());
 
     println!(
         "Discovering on Bluetooth adapter {} with address {}\n",
@@ -73,20 +79,24 @@ async fn main() -> bluer::Result<()> {
                                 let uuid = characteristic.uuid().await?;
 
                                 if uuid == led_char_uuid {
-                                    println!("Found our characteristic!");
+                                    println!("Found our characteristic {}", uuid);
                                     let flags = characteristic.flags().await?;
-                                    println!("Characteristic UUID: {} Flags: {:?}", &uuid,  flags);
+                                    // println!("Characteristic UUID: {} Flags: {:?}", &uuid, flags);
 
-                                    if flags.read {
-                                        println!("    Reading characteristic value");
-                                        let value = characteristic.read().await?;
-                                        println!("    Read value: {:x?}", &value);
-                                        sleep(Duration::from_secs(1)).await;
+                                    // if flags.read {
+                                    //     println!("    Reading characteristic value");
+                                    //     let value = characteristic.read().await?;
+                                    //     println!("    Read value: {:x?}", &value);
+                                    //     sleep(Duration::from_secs(1)).await;
+                                    // }
+
+                                    println!("{turn_on} {turn_off}");
+                                    if turn_on {
+                                        characteristic.write(&on_ev).await?;
                                     }
-
-                                    println!("    Writing characteristic value {:x?}", &off_ev);
-                                    // characteristic.write(&off_ev).await?;
-                                    characteristic.write(&on_ev).await?;
+                                    if turn_off {
+                                        characteristic.write(&off_ev).await?;
+                                    }
                                 }
                                 // println!(
                                 //     "    Characteristic data: {:?}",
@@ -98,7 +108,7 @@ async fn main() -> bluer::Result<()> {
 
                     println!("Disconnecting");
                     match device.disconnect().await {
-                        Ok(()) => {}
+                        Ok(()) => break,
                         Err(err) => {}
                     }
                 }
@@ -112,5 +122,23 @@ async fn main() -> bluer::Result<()> {
     println!("Stopping discovery");
 
     sleep(Duration::from_secs(1)).await;
+
+    Ok(())
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> bluer::Result<()> {
+    let _ = connect_device().await;
+
+    // build our application with a single route
+    println!("start axum server");
+    let app = Router::new().route("/", get(|| async { "Hello, World!" }));
+
+    // run it with hyper on localhost:3000
+    axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
+
     Ok(())
 }
