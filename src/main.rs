@@ -8,7 +8,18 @@ use tokio::{
     time::sleep,
 };
 
-use axum::{routing::get, Router};
+use tower::ServiceExt;
+use tower_http::{
+    services::{ServeDir, ServeFile},
+    trace::TraceLayer,
+};
+
+use axum::{
+    response::{Html, IntoResponse},
+    routing::{get, post},
+    Json, Router,
+};
+use serde::{Deserialize, Serialize};
 
 async fn connect_device() -> bluer::Result<()> {
     let turn_on = env::args().any(|arg| arg == "--on");
@@ -126,13 +137,17 @@ async fn connect_device() -> bluer::Result<()> {
     Ok(())
 }
 
-#[tokio::main(flavor = "current_thread")]
+// #[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() -> bluer::Result<()> {
     let _ = connect_device().await;
 
     // build our application with a single route
     println!("start axum server");
-    let app = Router::new().route("/", get(|| async { "Hello, World!" }));
+    let app = Router::new()
+        .route("/", get(index))
+        .route("/api/set", post(set_led))
+        .nest_service("/assets", ServeDir::new("assets"));
 
     // run it with hyper on localhost:3000
     axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
@@ -141,4 +156,19 @@ async fn main() -> bluer::Result<()> {
         .unwrap();
 
     Ok(())
+}
+
+// Include utf-8 file at **compile** time.
+async fn index() -> Html<&'static str> {
+    Html(std::include_str!("../assets/index.html"))
+}
+
+#[derive(Debug, Deserialize)]
+struct SetLed {
+    state: Option<String>,
+    color: Option<String>,
+}
+
+async fn set_led(Json(input): Json<SetLed>) -> impl IntoResponse {
+    println!("{:?}", input);
 }
