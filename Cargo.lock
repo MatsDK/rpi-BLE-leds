@@ -341,6 +341,7 @@ dependencies = [
  "env_logger",
  "futures",
  "libdbus-sys",
+ "log",
  "serde",
  "tokio",
  "tower",
