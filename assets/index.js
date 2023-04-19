@@ -18,3 +18,17 @@ const setLed = (body) => {
 		}
 	})
 }
+
+const color = document.querySelector(".color");
+const setColorButton = document.querySelector(".set_color");
+
+let currentColor = "#ffffff"
+
+color.addEventListener("input", (_) => {
+	console.log(color.value);
+	currentColor = color.value
+});
+
+setColorButton.addEventListener("click", () => {
+	setLed({ state: "color", color: currentColor })
+})

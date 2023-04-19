@@ -22,6 +22,7 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use std::fmt::Write;
 
 #[derive(Debug, Clone)]
 struct LedDevice {
@@ -95,6 +96,38 @@ impl LedDevice {
             characteristic.write(&off_ev).await.unwrap();
         }
     }
+
+    async fn set_color(&mut self, color: String) {
+        self.set_charasteristic().await.unwrap();
+
+        let mut color_ev = vec![0x33, 0x05, 0x02];
+
+        let mut color_vals = color.chars().collect::<Vec<char>>();
+        color_vals.remove(0);
+        let rgb_colors = color_vals
+            .chunks(2)
+            .map(|c| c.iter().collect::<String>())
+            .collect::<Vec<String>>();
+
+        color_ev.push(u8::from_str_radix(&rgb_colors[0], 16).unwrap());
+        color_ev.push(u8::from_str_radix(&rgb_colors[1], 16).unwrap());
+        color_ev.push(u8::from_str_radix(&rgb_colors[2], 16).unwrap());
+
+        color_ev.extend([
+            0x00, 0xFF, 0xAE, 0x54, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ]);
+
+        let mut xor = color_ev[0];
+        for a in color_ev.iter().skip(1) {
+            xor ^= a;
+        }
+
+        color_ev.push(xor);
+
+        if let Some(characteristic) = &self.characteristic {
+            characteristic.write(color_ev.as_slice()).await.unwrap();
+        }
+    }
 }
 
 async fn connect_device() -> bluer::Result<Option<LedDevice>> {
@@ -118,7 +151,11 @@ async fn connect_device() -> bluer::Result<Option<LedDevice>> {
             AdapterEvent::DeviceAdded(addr) => {
                 let device = adapter.device(addr)?;
                 let addr = device.address();
-                info!("Device {:?} on {:?}", device.adapter_name(), addr);
+                info!("Device {:?} on {:?}", device.alias().await, addr);
+                let props = device.all_properties().await?;
+                for prop in props {
+                    info!("    {:?}", &prop);
+                }
                 if addr == led_addr {
                     let uuids = device.uuids().await?.unwrap_or_default();
 
@@ -197,6 +234,11 @@ async fn set_led(
             }
             "off" => {
                 state.turn_off().await;
+            }
+            "color" => {
+                if let Some(color) = input.color {
+                    state.set_color(color).await;
+                }
             }
             _ => {}
         }
