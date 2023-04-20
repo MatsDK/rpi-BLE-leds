@@ -336,6 +336,7 @@ dependencies = [
 name = "gatt"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "bluer",
  "env_logger",
