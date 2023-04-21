@@ -32,3 +32,32 @@ color.addEventListener("input", (_) => {
 setColorButton.addEventListener("click", () => {
 	setLed({ state: "color", color: currentColor })
 })
+
+
+const devicesList = document.querySelector(".devices_list")
+
+const createDevicesList = () => {
+	for (const device of devices) {
+		let li = document.createElement("li")
+		li.textContent = device
+
+		let button = document.createElement("button")
+		button.textContent = "Connect"
+		button.addEventListener("click", () => {
+			connectTo(device)
+		})
+		li.appendChild(button)
+
+		devicesList.append(li)
+	}
+}
+
+createDevicesList()
+
+const connectTo = (addr) => {
+	fetch(`/api/connect/${addr}`, {
+		method: "POST",
+	}).then(res => {
+		console.log(res);
+	})
+}

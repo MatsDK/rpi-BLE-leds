@@ -3,6 +3,12 @@ name = "gatt"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+
+members = [
+    "device-macro",
+]
+
 [dependencies]
 bluer = { version = "0.15.7", features = ["full"] }
 log = "0.4.17"
@@ -14,4 +20,7 @@ axum = "0.6.15"
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.4.0", features = ["fs", "trace"] }
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 async-trait = "0.1.68"
+askama = "0.11"
+

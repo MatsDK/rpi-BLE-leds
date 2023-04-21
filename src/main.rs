@@ -1,16 +1,29 @@
-use bluer::{gatt::remote::Characteristic, AdapterEvent, Address, Device, Result, Uuid};
+use askama::Template;
+use bluer::{gatt::remote::Characteristic, AdapterEvent, Address, Device, Uuid};
 use futures::{pin_mut, StreamExt};
 use log::{debug, error, info, log_enabled, Level};
-use std::{collections::HashMap, env, fmt::Write, io, str::FromStr, time::Duration};
+use std::{
+    collections::HashMap,
+    env,
+    fmt::Write,
+    io::{self, Error, ErrorKind},
+    pin::Pin,
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
+};
+
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
+    sync::Mutex,
     time::sleep,
 };
 
 use async_trait::async_trait;
 use axum::{
-    extract::State,
-    response::{Html, IntoResponse},
+    extract::{Path, State},
+    http::StatusCode,
+    response::{Html, IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -25,45 +38,107 @@ use tower_http::{
 trait LedDevice {
     async fn connect(&mut self) -> io::Result<()>;
 
-    async fn on_event(&mut self, event: SetLed) -> io::Result<()>;
+    async fn on_event(&mut self, event: SetLedEvent) -> io::Result<()>;
 }
 
 #[derive(Debug, Clone)]
 struct GoveeLed {
     addr: Address,
+    service_uuid: Uuid,
+    characteristic_uuid: Uuid,
     device: Option<Device>,
     characteristic: Option<Characteristic>,
 }
 
 impl GoveeLed {
-    fn new(addr: Address) -> Self {
+    fn new(addr: Address, service_uuid: Uuid, characteristic_uuid: Uuid) -> Self {
         Self {
             addr,
+            service_uuid,
+            characteristic_uuid,
             device: None,
             characteristic: None,
         }
     }
 }
 
+// TOOD: use anyhow error handling
 #[async_trait]
 impl LedDevice for GoveeLed {
+    // TOOD: start job for sending `keep_alive` messages
     async fn connect(&mut self) -> io::Result<()> {
+        info!("try connect {:?}", self.device);
+        if let Some(device) = &self.device {
+            info!("is connected {}", device.is_connected().await?);
+            if device.is_connected().await? {
+                info!("Device already connected");
+                return Ok(());
+            }
+        }
+
         match discover_device(self.addr).await {
             Ok(Some(device)) => {
                 self.device = Some(device);
             }
             Ok(None) => {
-                error!("Device {} not found", self.addr);
+                let err = Error::new(
+                    ErrorKind::NotFound,
+                    format!("Device {} not found", self.addr),
+                );
+                return Err(err);
             }
             Err(e) => {
-                error!("Error connecting to {}: {e}", self.addr);
+                let err = Error::new(
+                    ErrorKind::NotFound,
+                    format!("Error searching for {}: {e}", self.addr),
+                );
+                return Err(err);
             }
+        }
+
+        if let Some(device) = &self.device {
+            match connect_device(device).await {
+                Ok(()) => {}
+                Err(e) => {
+                    let err = Error::new(
+                        ErrorKind::NotFound,
+                        format!("Error connecting to {}: {e}", self.addr),
+                    );
+                    return Err(err);
+                }
+            }
+
+            info!("Successfully connected to {:?}", self.device);
+
+            match find_characteristic(device, self.service_uuid, self.characteristic_uuid).await {
+                Ok(Some(characteristic)) => {
+                    self.characteristic = Some(characteristic);
+                }
+                Ok(None) => {
+                    let err = Error::new(
+                        ErrorKind::NotFound,
+                        format!("Characteristic {} not found", self.characteristic_uuid),
+                    );
+                    return Err(err);
+                }
+                Err(e) => {
+                    let err = Error::new(
+                        ErrorKind::NotFound,
+                        format!(
+                            "Error searching for characteristic {}: {e}",
+                            self.characteristic_uuid
+                        ),
+                    );
+                    return Err(err);
+                }
+            }
+            info!("successfully found char");
         }
 
         Ok(())
     }
 
-    async fn on_event(&mut self, event: SetLed) -> io::Result<()> {
+    async fn on_event(&mut self, event: SetLedEvent) -> io::Result<()> {
         Ok(())
     }
 }
@@ -83,7 +158,7 @@ impl LedDevice for Other {
         Ok(())
     }
 
-    async fn on_event(&mut self, event: SetLed) -> io::Result<()> {
+    async fn on_event(&mut self, event: SetLedEvent) -> io::Result<()> {
         Ok(())
     }
 }
@@ -223,7 +298,6 @@ async fn discover_device(device_addr: Address) -> bluer::Result<Option<Device>> 
 
                 if addr == device_addr {
                     info!("Found led device on {device_addr}");
-                    // let uuids = device.uuids().await?.unwrap_or_default();
 
                     return Ok(Some(device));
                 }
@@ -238,12 +312,65 @@ async fn discover_device(device_addr: Address) -> bluer::Result<Option<Device>> 
     Ok(None)
 }
 
-#[derive(Debug)]
-struct GlobalState<T: LedDevice> {
+const MAX_CONNECT_RETRIES: i32 = 2;
+
+async fn connect_device(device: &Device) -> bluer::Result<()> {
+    if device.is_connected().await? {
+        return Ok(());
+    }
+
+    let mut retries = 0;
+    loop {
+        match device.connect().await {
+            Ok(()) => break,
+            Err(err) if retries <= MAX_CONNECT_RETRIES => {
+                info!("Error while connecting to {}: {}", device.address(), &err);
+                retries += 1;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+
+    Ok(())
+}
+
+async fn find_characteristic(
+    device: &Device,
+    service_uuid: Uuid,
+    characteristic_uuid: Uuid,
+) -> bluer::Result<Option<Characteristic>> {
+    let uuids = device.uuids().await?.unwrap_or_default();
+    info!("got here: {:?}", device.is_connected().await);
+    let md = device.manufacturer_data().await?;
+    info!("got here333");
+
+    for service in device.services().await? {
+        info!("got here2");
+        let uuid = service.uuid().await?;
+        info!("got here3");
+        if uuid == service_uuid {
+            info!("Found service: {uuid}");
+
+            for characteristic in service.characteristics().await? {
+                let uuid = characteristic.uuid().await?;
+                if uuid == characteristic_uuid {
+                    info!("Found characteristic: {uuid}");
+
+                    return Ok(Some(characteristic));
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+#[derive(Debug, Clone)]
+struct DevicesState<T: LedDevice> {
     devices: HashMap<Address, T>,
 }
 
-impl<T: LedDevice> GlobalState<T> {
+impl<T: LedDevice> DevicesState<T> {
     fn add_device(&mut self, addr: Address, device: T) {
         self.devices.insert(addr, device);
     }
@@ -251,20 +378,30 @@ impl<T: LedDevice> GlobalState<T> {
     fn get_device(&mut self, addr: &Address) -> Option<&mut T> {
         self.devices.get_mut(addr)
     }
+
+    fn get_device_names(&self) -> Vec<String> {
+        self.devices.keys().map(|a| a.to_string()).collect()
+    }
+
+    fn set_led(&mut self, addr: &Address) {
+        let device = self.get_device(addr);
+    }
 }
 
-impl<T> Default for GlobalState<T>
+impl<T> Default for DevicesState<T>
 where
     T: LedDevice,
 {
-    fn default() -> GlobalState<T> {
+    fn default() -> DevicesState<T> {
         Self {
             devices: Default::default(),
         }
     }
 }
 
-#[derive(Debug)]
+type GlobalState = Arc<Mutex<DevicesState<Devices>>>;
+
+#[derive(Debug, Clone)]
 enum Devices {
     Govee(GoveeLed),
     Other(Other),
@@ -280,7 +417,7 @@ impl LedDevice for Devices {
         }
     }
 
-    async fn on_event(&mut self, event: SetLed) -> io::Result<()> {
+    async fn on_event(&mut self, event: SetLedEvent) -> io::Result<()> {
         match self {
             Devices::Govee(d) => d.on_event(event).await,
             Devices::Other(d) => d.on_event(event).await,
@@ -293,68 +430,103 @@ async fn main() -> bluer::Result<()> {
     env_logger::init();
 
     let led_addr = Address::from_str("A4:C1:38:EC:91:32")?;
-    let leds = Devices::Govee(GoveeLed::new(led_addr.clone()));
+    let service_uuid = Uuid::parse_str("000102030405060708090a0b0c0d1910").unwrap();
+    let characteristic_uuid = Uuid::parse_str("000102030405060708090a0b0c0d2b11").unwrap();
+
+    let leds = Devices::Govee(GoveeLed::new(
+        led_addr.clone(),
+        service_uuid,
+        characteristic_uuid,
+    ));
 
     let other = Devices::Other(Other::new());
 
-    let mut state: GlobalState<Devices> = Default::default();
-    state.add_device(led_addr.clone(), leds);
+    let mut state = GlobalState::default();
+    state.lock().await.add_device(led_addr.clone(), leds);
 
-    if let Some(device) = state.get_device(&led_addr) {
-        device.connect().await.unwrap();
-        println!("{device:?}");
-    }
+    let api_router = Router::new()
+        .route("/set", post(set_led))
+        .route("/connect/:addr", post(connect_to_led));
 
-    // let mut led_device = connect_device().await.unwrap().unwrap();
-    // led_device.set_charasteristic().await.unwrap();
-    // println!("{led_device:?}");
+    let app_router = Router::new()
+        .route("/", get(index))
+        .nest("/api", api_router)
+        .nest_service("/assets", ServeDir::new("assets"))
+        .with_state(state);
 
-    // println!("start axum server");
-    // let app = Router::new()
-    //     .route("/", get(index))
-    //     .route("/api/set", post(set_led))
-    //     .nest_service("/assets", ServeDir::new("assets"))
-    //     .with_state(led_device);
-
-    // axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
-    //     .serve(app.into_make_service())
-    //     .await
-    //     .unwrap();
+    println!("start axum server");
+    axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
+        .serve(app_router.into_make_service())
+        .await
+        .unwrap();
 
     Ok(())
 }
 
-async fn index() -> Html<&'static str> {
-    Html(std::include_str!("../assets/index.html"))
+async fn connect_to_led(
+    Path(addr): Path<String>,
+    State(state): State<GlobalState>,
+) -> impl IntoResponse {
+    let addr = Address::from_str(&addr).unwrap();
+    let mut state = state.lock().await;
+
+    if let Some(device) = state.get_device(&addr) {
+        match device.connect().await {
+            Ok(()) => "Successfully connected".into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to connect: {}", e),
+            )
+                .into_response(),
+        }
+    } else {
+        "Device not found".into_response()
+    }
 }
 
 #[derive(Debug, Deserialize)]
-struct SetLed {
+struct SetLedEvent {
     state: Option<String>,
     color: Option<String>,
 }
 
-// async fn set_led(
-//     State(mut state): State<LedDevice>,
-//     Json(input): Json<SetLed>,
-// ) -> impl IntoResponse {
-//     println!("{:?}", input);
-//     println!("{:?}", state);
+async fn set_led(
+    State(state): State<GlobalState>,
+    Json(input): Json<SetLedEvent>,
+) -> impl IntoResponse {
+    info!("{:?}", input);
+    info!("{:?}", state);
+}
 
-//     if let Some(on_off_state) = input.state {
-//         match on_off_state.as_str() {
-//             "on" => {
-//                 state.turn_on().await;
-//             }
-//             "off" => {
-//                 state.turn_off().await;
-//             }
-//             "color" => {
-//                 if let Some(color) = input.color {
-//                     state.set_color(color).await;
-//                 }
-//             }
-//             _ => {}
-//         }
-//     }
-// }
+async fn index(State(state): State<GlobalState>) -> impl IntoResponse {
+    let mut state = state.lock().await;
+
+    let template = IndexTemplate {
+        devices: serde_json::to_string(&state.get_device_names()).unwrap(),
+    };
+    HtmlTemplate(template)
+}
+
+#[derive(Template)]
+#[template(path = "index.html", escape = "none")]
+struct IndexTemplate {
+    devices: String,
+}
+
+struct HtmlTemplate<T>(T);
+
+impl<T> IntoResponse for HtmlTemplate<T>
+where
+    T: Template,
+{
+    fn into_response(self) -> Response {
+        match self.0.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(err) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to render template. Error: {}", err),
+            )
+                .into_response(),
+        }
+    }
+}
