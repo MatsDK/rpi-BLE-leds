@@ -1,23 +1,15 @@
 use askama::Template;
 use bluer::{gatt::remote::Characteristic, AdapterEvent, Address, Device, Uuid};
 use futures::{pin_mut, StreamExt};
-use log::{debug, error, info, log_enabled, Level};
+use log::{debug, error, info};
 use std::{
     collections::HashMap,
-    env,
-    fmt::Write,
     io::{self, Error, ErrorKind},
-    pin::Pin,
     str::FromStr,
     sync::Arc,
-    time::Duration,
 };
 
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    sync::Mutex,
-    time::sleep,
-};
+use tokio::sync::Mutex;
 
 use async_trait::async_trait;
 use axum::{
@@ -27,12 +19,8 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use serde::{Deserialize, Serialize};
-use tower::ServiceExt;
-use tower_http::{
-    services::{ServeDir, ServeFile},
-    trace::TraceLayer,
-};
+use serde::Deserialize;
+use tower_http::services::ServeDir;
 
 #[async_trait]
 trait LedDevice {
@@ -60,6 +48,63 @@ impl GoveeLed {
             characteristic: None,
         }
     }
+
+    // 0x33, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x33
+    async fn turn_on(&mut self) {
+        let on_ev = vec![
+            0x33, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x33,
+        ];
+        if let Some(characteristic) = &self.characteristic {
+            characteristic.write(&on_ev).await.unwrap();
+        }
+    }
+
+    // 0x33, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x32
+    async fn turn_off(&mut self) {
+        let off_ev = vec![
+            0x33, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x32,
+        ];
+        if let Some(characteristic) = &self.characteristic {
+            characteristic.write(&off_ev).await.unwrap();
+        }
+    }
+
+    // 0x33, 0x05, 0x02, RED, GREEN, BLUE, 0x00, 0xFF, 0xAE, 0x54, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, XOR
+    // 0x33, 0x05, 0x02, RED, GREEN, BLUE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, XOR
+    async fn set_color(&mut self, color: String) {
+        let mut color_ev = vec![0x33, 0x05, 0x02];
+
+        let mut color_vals = color.chars().collect::<Vec<char>>();
+        color_vals.remove(0);
+        let rgb_colors = color_vals
+            .chunks(2)
+            .map(|c| c.iter().collect::<String>())
+            .collect::<Vec<String>>();
+
+        color_ev.push(u8::from_str_radix(&rgb_colors[0], 16).unwrap());
+        color_ev.push(u8::from_str_radix(&rgb_colors[1], 16).unwrap());
+        color_ev.push(u8::from_str_radix(&rgb_colors[2], 16).unwrap());
+
+        // color_ev.extend([
+        //     0x00, 0xFF, 0xAE, 0x54, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        // ]);
+        color_ev.extend([
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ]);
+
+        let mut xor = color_ev[0];
+        for a in color_ev.iter().skip(1) {
+            xor ^= a;
+        }
+
+        color_ev.push(xor);
+
+        if let Some(characteristic) = &self.characteristic {
+            characteristic.write(color_ev.as_slice()).await.unwrap();
+        }
+    }
 }
 
 // TOOD: use anyhow error handling
@@ -67,9 +112,7 @@ impl GoveeLed {
 impl LedDevice for GoveeLed {
     // TOOD: start job for sending `keep_alive` messages
     async fn connect(&mut self) -> io::Result<()> {
-        info!("try connect {:?}", self.device);
         if let Some(device) = &self.device {
-            info!("is connected {}", device.is_connected().await?);
             if device.is_connected().await? {
                 info!("Device already connected");
                 return Ok(());
@@ -139,6 +182,15 @@ impl LedDevice for GoveeLed {
     }
 
     async fn on_event(&mut self, event: SetLedEvent) -> io::Result<()> {
+        info!("Set led on {:?}, {:?}", self.addr, event);
+
+        match event.event_type.as_str() {
+            "on" => self.turn_on().await,
+            "off" => self.turn_off().await,
+            "color" if event.color.is_some() => self.set_color(event.color.unwrap()).await,
+            _ => {}
+        }
+
         Ok(())
     }
 }
@@ -159,122 +211,10 @@ impl LedDevice for Other {
     }
 
     async fn on_event(&mut self, event: SetLedEvent) -> io::Result<()> {
+        info!("Set led: {event:?}");
         Ok(())
     }
 }
-
-// #[derive(Debug, Clone)]
-// struct LedDevice {
-//     device: Device,
-//     characteristic: Option<Characteristic>,
-// }
-
-// impl LedDevice {
-//     async fn set_charasteristic(&mut self) -> bluer::Result<()> {
-//         if !self.device.is_connected().await? {
-//             info!("Connecting device");
-
-//             let mut retries = 2;
-//             loop {
-//                 match self.device.connect().await {
-//                     Ok(()) => break,
-//                     Err(err) if retries > 0 => {
-//                         info!("    Connect error: {}", &err);
-//                         retries -= 1;
-//                     }
-//                     Err(err) => return Err(err),
-//                 }
-//             }
-//             info!("Connected");
-//         }
-
-//         let led_service_uuid = Uuid::parse_str("000102030405060708090a0b0c0d1910").unwrap();
-//         let led_char_uuid = Uuid::parse_str("000102030405060708090a0b0c0d2b11").unwrap();
-
-//         for service in self.device.services().await? {
-//             let uuid = service.uuid().await?;
-//             if led_service_uuid == uuid {
-//                 debug!(">> Found service with uuid: {:?}", uuid);
-//                 for characteristic in service.characteristics().await? {
-//                     let uuid = characteristic.uuid().await?;
-
-//                     if uuid == led_char_uuid {
-//                         debug!(">> Found our characteristic {}", uuid);
-
-//                         let flags = characteristic.flags().await?;
-//                         debug!(">> Characteristic UUID: {} Flags: {:?}", &uuid, flags);
-
-//                         self.characteristic = Some(characteristic);
-//                         break;
-//                     }
-//                 }
-//             }
-//         }
-
-//         Ok(())
-//     }
-
-//     // 0x33, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x33
-//     async fn turn_on(&mut self) {
-//         self.set_charasteristic().await.unwrap();
-//         let on_ev = vec![
-//             0x33, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-//             0x00, 0x00, 0x00, 0x00, 0x00, 0x33,
-//         ];
-//         if let Some(characteristic) = &self.characteristic {
-//             characteristic.write(&on_ev).await.unwrap();
-//         }
-//     }
-
-//     // 0x33, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x32
-//     async fn turn_off(&mut self) {
-//         self.set_charasteristic().await.unwrap();
-//         let off_ev = vec![
-//             0x33, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-//             0x00, 0x00, 0x00, 0x00, 0x00, 0x32,
-//         ];
-//         if let Some(characteristic) = &self.characteristic {
-//             characteristic.write(&off_ev).await.unwrap();
-//         }
-//     }
-
-//     // 0x33, 0x05, 0x02, RED, GREEN, BLUE, 0x00, 0xFF, 0xAE, 0x54, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, XOR
-//     // 0x33, 0x05, 0x02, RED, GREEN, BLUE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, XOR
-//     async fn set_color(&mut self, color: String) {
-//         self.set_charasteristic().await.unwrap();
-
-//         let mut color_ev = vec![0x33, 0x05, 0x02];
-
-//         let mut color_vals = color.chars().collect::<Vec<char>>();
-//         color_vals.remove(0);
-//         let rgb_colors = color_vals
-//             .chunks(2)
-//             .map(|c| c.iter().collect::<String>())
-//             .collect::<Vec<String>>();
-
-//         color_ev.push(u8::from_str_radix(&rgb_colors[0], 16).unwrap());
-//         color_ev.push(u8::from_str_radix(&rgb_colors[1], 16).unwrap());
-//         color_ev.push(u8::from_str_radix(&rgb_colors[2], 16).unwrap());
-
-//         // color_ev.extend([
-//         //     0x00, 0xFF, 0xAE, 0x54, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-//         // ]);
-//         color_ev.extend([
-//             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-//         ]);
-
-//         let mut xor = color_ev[0];
-//         for a in color_ev.iter().skip(1) {
-//             xor ^= a;
-//         }
-
-//         color_ev.push(xor);
-
-//         if let Some(characteristic) = &self.characteristic {
-//             characteristic.write(color_ev.as_slice()).await.unwrap();
-//         }
-//     }
-// }
 
 async fn discover_device(device_addr: Address) -> bluer::Result<Option<Device>> {
     let session = bluer::Session::new().await?;
@@ -302,7 +242,7 @@ async fn discover_device(device_addr: Address) -> bluer::Result<Option<Device>> 
                     return Ok(Some(device));
                 }
             }
-            AdapterEvent::DeviceRemoved(addr) => {
+            AdapterEvent::DeviceRemoved(_addr) => {
                 // info!("Device removed {addr}");
             }
             _ => (),
@@ -339,15 +279,10 @@ async fn find_characteristic(
     service_uuid: Uuid,
     characteristic_uuid: Uuid,
 ) -> bluer::Result<Option<Characteristic>> {
-    let uuids = device.uuids().await?.unwrap_or_default();
-    info!("got here: {:?}", device.is_connected().await);
-    let md = device.manufacturer_data().await?;
-    info!("got here333");
+    let _uuids = device.uuids().await?.unwrap_or_default();
 
     for service in device.services().await? {
-        info!("got here2");
         let uuid = service.uuid().await?;
-        info!("got here3");
         if uuid == service_uuid {
             info!("Found service: {uuid}");
 
@@ -381,10 +316,6 @@ impl<T: LedDevice> DevicesState<T> {
 
     fn get_device_names(&self) -> Vec<String> {
         self.devices.keys().map(|a| a.to_string()).collect()
-    }
-
-    fn set_led(&mut self, addr: &Address) {
-        let device = self.get_device(addr);
     }
 }
 
@@ -433,19 +364,19 @@ async fn main() -> bluer::Result<()> {
     let service_uuid = Uuid::parse_str("000102030405060708090a0b0c0d1910").unwrap();
     let characteristic_uuid = Uuid::parse_str("000102030405060708090a0b0c0d2b11").unwrap();
 
-    let leds = Devices::Govee(GoveeLed::new(
+    let govee_leds = Devices::Govee(GoveeLed::new(
         led_addr.clone(),
         service_uuid,
         characteristic_uuid,
     ));
 
-    let other = Devices::Other(Other::new());
+    let _other = Devices::Other(Other::new());
 
-    let mut state = GlobalState::default();
-    state.lock().await.add_device(led_addr.clone(), leds);
+    let state = GlobalState::default();
+    state.lock().await.add_device(led_addr, govee_leds);
 
     let api_router = Router::new()
-        .route("/set", post(set_led))
+        .route("/set/:addr", post(set_led))
         .route("/connect/:addr", post(connect_to_led));
 
     let app_router = Router::new()
@@ -486,20 +417,27 @@ async fn connect_to_led(
 
 #[derive(Debug, Deserialize)]
 struct SetLedEvent {
-    state: Option<String>,
+    event_type: String,
     color: Option<String>,
 }
 
 async fn set_led(
+    Path(addr): Path<String>,
     State(state): State<GlobalState>,
     Json(input): Json<SetLedEvent>,
 ) -> impl IntoResponse {
-    info!("{:?}", input);
-    info!("{:?}", state);
+    let addr = Address::from_str(&addr).unwrap();
+    let mut state = state.lock().await;
+
+    if let Some(device) = state.get_device(&addr) {
+        match device.on_event(input).await {
+            _ => {}
+        }
+    }
 }
 
 async fn index(State(state): State<GlobalState>) -> impl IntoResponse {
-    let mut state = state.lock().await;
+    let state = state.lock().await;
 
     let template = IndexTemplate {
         devices: serde_json::to_string(&state.get_device_names()).unwrap(),

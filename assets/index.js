@@ -1,16 +1,19 @@
 const onButton = document.querySelector(".on")
 const offButton = document.querySelector(".off")
 
+let connectedDevice = null;
+
 onButton.addEventListener("click", () => {
-	setLed({ state: "on" })
+	setLed({ event_type: "on" })
 })
 
 offButton.addEventListener("click", () => {
-	setLed({ state: "off" })
+	setLed({ event_type: "off" })
 })
 
 const setLed = (body) => {
-	fetch("/api/set", {
+	if (!connectedDevice) return
+	fetch(`/api/set/${connectedDevice}`, {
 		method: "POST",
 		body: JSON.stringify(body),
 		headers: {
@@ -30,7 +33,7 @@ color.addEventListener("input", (_) => {
 });
 
 setColorButton.addEventListener("click", () => {
-	setLed({ state: "color", color: currentColor })
+	setLed({ event_type: "color", color: currentColor })
 })
 
 
@@ -58,6 +61,6 @@ const connectTo = (addr) => {
 	fetch(`/api/connect/${addr}`, {
 		method: "POST",
 	}).then(res => {
-		console.log(res);
+		connectedDevice = addr
 	})
 }
