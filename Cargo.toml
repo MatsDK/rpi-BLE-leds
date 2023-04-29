@@ -7,9 +7,14 @@ edition = "2021"
 
 members = [
     "device-macro",
+    "devices",
 ]
 
 [dependencies]
+
+device_macro = { path = "./device-macro" }
+devices = { path = "./devices" }
+
 bluer = { version = "0.15.7", features = ["full"] }
 log = "0.4.17"
 env_logger = "0.10.0"

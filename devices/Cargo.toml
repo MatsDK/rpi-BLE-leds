@@ -1,0 +1,13 @@
+[package]
+name = "devices"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+device_macro = { path = "../device-macro" }
+
+bluer = { version = "0.15.7", features = ["full"] }
+log = "0.4.17"
+async-trait = "0.1.68"
+futures = "0.3.27"

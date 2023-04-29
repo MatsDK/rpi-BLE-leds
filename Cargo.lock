@@ -232,8 +232,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "device-macro"
+name = "device_macro"
 version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn 2.0.15",
+]
+
+[[package]]
+name = "devices"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bluer",
+ "device_macro",
+ "futures",
+ "log",
+]
 
 [[package]]
 name = "displaydoc"
@@ -392,6 +407,8 @@ dependencies = [
  "async-trait",
  "axum",
  "bluer",
+ "device_macro",
+ "devices",
  "env_logger",
  "futures",
  "libdbus-sys",
