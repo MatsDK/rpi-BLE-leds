@@ -55,16 +55,16 @@ async fn main() -> bluer::Result<()> {
     let service_uuid = Uuid::parse_str("000102030405060708090a0b0c0d1910").unwrap();
     let characteristic_uuid = Uuid::parse_str("000102030405060708090a0b0c0d2b11").unwrap();
 
+    let state = GlobalState::default();
+
     let govee_leds = Devices::Govee(GoveeLed::new(
         led_addr.clone(),
         service_uuid,
         characteristic_uuid,
     ));
+    state.lock().await.add_device(led_addr, govee_leds);
 
     // let esp = Devices::Esp(EspLed::new());
-
-    let state = GlobalState::default();
-    state.lock().await.add_device(led_addr, govee_leds);
 
     let api_router = Router::new()
         .route("/set/:addr", post(set_led))

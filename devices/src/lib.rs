@@ -1,5 +1,6 @@
 pub mod esp;
 pub mod govee;
+mod keep_alive_job;
 
 use esp::EspLed;
 use govee::GoveeLed;
@@ -25,7 +26,7 @@ pub trait LedDevice {
     async fn on_event(&mut self, event: Event) -> io::Result<()>;
 }
 
-#[derive(Debug, Clone, device_macro::Devices)]
+#[derive(Debug, device_macro::Devices)]
 pub enum Devices {
     Govee(GoveeLed),
     Esp(EspLed),

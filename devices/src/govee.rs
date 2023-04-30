@@ -1,27 +1,36 @@
 use async_trait::async_trait;
-use bluer::{gatt::remote::Characteristic, Address, Device, Uuid};
+use bluer::{gatt::remote::Characteristic, gatt::CharacteristicWriter, Address, Device, Uuid};
 use log::{debug, error, info};
 use std::io::{self, Error, ErrorKind};
+use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
+use tokio::sync::Mutex;
+use tokio::time::Duration;
 
 use super::{connect_device, discover_device, find_characteristic, Event, LedDevice};
+use crate::keep_alive_job::KeepAlive;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct GoveeLed {
     addr: Address,
     service_uuid: Uuid,
     characteristic_uuid: Uuid,
     device: Option<Device>,
     characteristic: Option<Characteristic>,
+    keep_alive: KeepAlive,
 }
 
 impl GoveeLed {
     pub fn new(addr: Address, service_uuid: Uuid, characteristic_uuid: Uuid) -> Self {
+        let keep_alive = KeepAlive::new(Duration::from_secs(2));
+
         Self {
             addr,
             service_uuid,
             characteristic_uuid,
             device: None,
             characteristic: None,
+            keep_alive,
         }
     }
 
@@ -132,7 +141,18 @@ impl LedDevice for GoveeLed {
 
             match find_characteristic(device, self.service_uuid, self.characteristic_uuid).await {
                 Ok(Some(characteristic)) => {
+                    // let mut write_io = Arc::new(Mutex::new(characteristic.write_io().await?));
+                    // self.writer = Some(write_io);
                     self.characteristic = Some(characteristic);
+
+                    // self.keep_alive.run(write_io, || async move {
+                    //     // TODO: shouldn't create every iteration
+                    //     let keep_alive_ev = vec![
+                    //         0xAA, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    //         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xAB,
+                    //     ];
+                    //     Ok(keep_alive_ev)
+                    // });
                 }
                 Ok(None) => {
                     let err = Error::new(

@@ -248,6 +248,7 @@ dependencies = [
  "device_macro",
  "futures",
  "log",
+ "tokio",
 ]
 
 [[package]]
