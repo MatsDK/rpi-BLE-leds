@@ -34,6 +34,10 @@ impl LedDevice for EspLed {
         Ok(())
     }
 
+    async fn disconnect(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
     async fn on_event(&mut self, event: Event) -> io::Result<()> {
         info!("Set led on {:?}, {:?}", self.addr, event);
 

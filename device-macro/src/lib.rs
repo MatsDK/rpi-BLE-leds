@@ -63,6 +63,12 @@ pub fn devices(input: TokenStream) -> TokenStream {
                 }
             }
 
+            async fn disconnect(&mut self) -> io::Result<()> {
+                match self {
+                    #(#ident::#devices(d) => d.disconnect().await,)*
+                }
+            }
+
             async fn on_event(&mut self, event: crate::Event) -> io::Result<()> {
                 match self {
                     #(#ident::#devices(d) => d.on_event(event).await,)*

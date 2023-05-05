@@ -16,12 +16,15 @@ pub enum Event {
     On,
     Off,
     Color(String),
+    Brightness(u8),
     Other(Option<String>),
 }
 
 #[async_trait]
 pub trait LedDevice {
     async fn connect(&mut self) -> io::Result<()>;
+
+    async fn disconnect(&mut self) -> io::Result<()>;
 
     async fn on_event(&mut self, event: Event) -> io::Result<()>;
 }
@@ -30,28 +33,6 @@ pub trait LedDevice {
 pub enum Devices {
     Govee(GoveeLed),
     Esp(EspLed),
-    Other(Other),
-}
-
-#[derive(Debug, Clone)]
-pub struct Other {}
-
-impl Other {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-#[async_trait]
-impl LedDevice for Other {
-    async fn connect(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-
-    async fn on_event(&mut self, event: Event) -> io::Result<()> {
-        info!("Set led: {event:?}");
-        Ok(())
-    }
 }
 
 async fn discover_device(device_addr: Address) -> bluer::Result<Option<Device>> {

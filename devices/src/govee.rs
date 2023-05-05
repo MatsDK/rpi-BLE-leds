@@ -5,7 +5,7 @@ use std::io::{self, Error, ErrorKind};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
-use tokio::time::Duration;
+use tokio::time::{self, Duration};
 
 use super::{connect_device, discover_device, find_characteristic, Event, LedDevice};
 use crate::keep_alive_job::KeepAlive;
@@ -91,6 +91,23 @@ impl GoveeLed {
             characteristic.write(color_ev.as_slice()).await.unwrap();
         }
     }
+
+    // 0x33, 0x04, BRIGHTNESS, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, (0x33 ^ 0x04 ^ BRIGHTNESS)
+    async fn set_brightness(&mut self, brightness: u8) {
+        let mut brightness_ev = vec![
+            0x33, 0x04, brightness, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+
+        brightness_ev.push(0x33 ^ 0x04 ^ brightness);
+
+        if let Some(characteristic) = &self.characteristic {
+            characteristic
+                .write(brightness_ev.as_slice())
+                .await
+                .unwrap();
+        }
+    }
 }
 
 // TOOD: use anyhow error handling
@@ -141,18 +158,15 @@ impl LedDevice for GoveeLed {
 
             match find_characteristic(device, self.service_uuid, self.characteristic_uuid).await {
                 Ok(Some(characteristic)) => {
-                    // let mut write_io = Arc::new(Mutex::new(characteristic.write_io().await?));
-                    // self.writer = Some(write_io);
-                    self.characteristic = Some(characteristic);
+                    self.characteristic = Some(characteristic.clone());
 
-                    // self.keep_alive.run(write_io, || async move {
-                    //     // TODO: shouldn't create every iteration
-                    //     let keep_alive_ev = vec![
-                    //         0xAA, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    //         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xAB,
-                    //     ];
-                    //     Ok(keep_alive_ev)
-                    // });
+                    // Send keep alive packet every 2 seconds to ensure the connection remains established, until disconnected manually.
+                    // 0xAA, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xAB
+                    let keep_alive_ev = vec![
+                        0xAA, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xAB,
+                    ];
+                    self.keep_alive.run(characteristic, keep_alive_ev);
                 }
                 Ok(None) => {
                     let err = Error::new(
@@ -178,6 +192,10 @@ impl LedDevice for GoveeLed {
         Ok(())
     }
 
+    async fn disconnect(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
     async fn on_event(&mut self, event: Event) -> io::Result<()> {
         info!("Set led on {:?}, {:?}", self.addr, event);
 
@@ -185,6 +203,7 @@ impl LedDevice for GoveeLed {
             Event::On => self.turn_on().await,
             Event::Off => self.turn_off().await,
             Event::Color(color) => self.set_color(color).await,
+            Event::Brightness(brightness) => self.set_brightness(brightness).await,
             Event::Other(_) => {}
         }
 

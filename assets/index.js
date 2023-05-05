@@ -36,6 +36,18 @@ setColorButton.addEventListener("click", () => {
 	setLed({ event_type: "color", color: currentColor })
 })
 
+const brightness = document.querySelector(".brightness");
+const brightnessButton = document.querySelector(".set_brightness");
+
+let currentBrightness = 255;
+
+brightness.addEventListener("input", (_) => {
+	currentBrightness = +brightness.value
+});
+
+brightnessButton.addEventListener("click", () => {
+	setLed({ event_type: "brightness", brightness: currentBrightness })
+})
 
 const devicesList = document.querySelector(".devices_list")
 

@@ -110,6 +110,7 @@ async fn connect_to_led(
 pub struct SetLedEvent {
     event_type: String,
     color: Option<String>,
+    brightness: Option<u8>,
     other_ev: Option<String>,
 }
 
@@ -119,6 +120,7 @@ impl From<SetLedEvent> for Event {
             "on" => Event::On,
             "off" => Event::Off,
             "color" if val.color.is_some() => Event::Color(val.color.unwrap()),
+            "brightness" if val.brightness.is_some() => Event::Brightness(val.brightness.unwrap()),
             _ => Event::Other(val.other_ev),
         }
     }
