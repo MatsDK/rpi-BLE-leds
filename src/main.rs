@@ -68,7 +68,8 @@ async fn main() -> bluer::Result<()> {
 
     let api_router = Router::new()
         .route("/set/:addr", post(set_led))
-        .route("/connect/:addr", post(connect_to_led));
+        .route("/connect/:addr", post(connect_to_led))
+        .route("/disconnect/:addr", post(disconnect_from_led));
 
     let app_router = Router::new()
         .route("/", get(index))
@@ -98,6 +99,27 @@ async fn connect_to_led(
             Err(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Failed to connect: {}", e),
+            )
+                .into_response(),
+        }
+    } else {
+        "Device not found".into_response()
+    }
+}
+
+async fn disconnect_from_led(
+    Path(addr): Path<String>,
+    State(state): State<GlobalState>,
+) -> impl IntoResponse {
+    let addr = Address::from_str(&addr).unwrap();
+    let mut state = state.lock().await;
+
+    if let Some(device) = state.get_device(&addr) {
+        match device.disconnect().await {
+            Ok(()) => "Successfully disconnected".into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to disconnect: {}", e),
             )
                 .into_response(),
         }

@@ -193,6 +193,13 @@ impl LedDevice for GoveeLed {
     }
 
     async fn disconnect(&mut self) -> io::Result<()> {
+        if let Some(device) = &self.device {
+            device.disconnect().await?;
+            self.keep_alive.stop();
+            self.device = None;
+            self.characteristic = None;
+        }
+        info!("try disconnect");
         Ok(())
     }
 

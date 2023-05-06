@@ -52,14 +52,21 @@ brightnessButton.addEventListener("click", () => {
 const devicesList = document.querySelector(".devices_list")
 
 const createDevicesList = () => {
+	devicesList.innerHTML = ''
 	for (const device of devices) {
 		let li = document.createElement("li")
 		li.textContent = device
 
 		let button = document.createElement("button")
-		button.textContent = "Connect"
+		button.textContent = connectedDevice === device ? "Disconnect" : "Connect"
 		button.addEventListener("click", () => {
-			connectTo(device)
+			if (connectedDevice === device) {
+
+				disconnect(device)
+			} else {
+				connectTo(device)
+
+			}
 		})
 		li.appendChild(button)
 
@@ -74,5 +81,15 @@ const connectTo = (addr) => {
 		method: "POST",
 	}).then(res => {
 		connectedDevice = addr
+		createDevicesList()
+	})
+}
+
+const disconnect = (addr) => {
+	fetch(`/api/disconnect/${addr}`, {
+		method: "POST",
+	}).then(res => {
+		connectedDevice = null
+		createDevicesList()
 	})
 }
