@@ -4,11 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace]
-
 members = [
     "device-macro",
     "devices",
 ]
+exclude = ["esp-code"]
 
 [dependencies]
 
