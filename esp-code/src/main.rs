@@ -3,10 +3,11 @@
 
 extern crate alloc;
 
-use esp32_nimble::BLEDevice;
-use esp_idf_hal::task::executor::{EspExecutor, Local};
+use esp32_nimble::{utilities, BLEDevice, NimbleProperties};
+use esp_idf_hal::delay::FreeRtos;
 use esp_idf_sys as _;
 use log::*;
+use uuid::Uuid;
 
 #[no_mangle]
 fn main() {
@@ -14,28 +15,58 @@ fn main() {
     // or else some patches to the runtime implemented by esp-idf-sys might not link properly.
     esp_idf_sys::link_patches();
 
-    // Bind the log crate to the ESP Logging facilities
     esp_idf_svc::log::EspLogger::initialize_default();
-    log::set_max_level(log::LevelFilter::Debug);
+    // log::set_max_level(log::LevelFilter::Debug);
 
-    let executor = EspExecutor::<16, Local>::new();
-    let _task = executor
-        .spawn_local(async {
-            let ble_device = BLEDevice::take();
-            let ble_scan = ble_device.get_scan();
-            ble_scan
-                .active_scan(true)
-                .interval(100)
-                .window(99)
-                .on_result(|param| {
-                    info!("Advertised Device: {:?}", param);
-                });
-            ble_scan.start(10000).await.unwrap();
-            info!("Scan end");
+    let ble_device = BLEDevice::take();
+
+    let server = ble_device.get_server();
+    server.on_connect(|d| {
+        info!("Client connected: {:?}", d);
+    });
+
+    let uuid = utilities::BleUuid::Uuid128(
+        Uuid::try_parse("fafafafa-fafa-fafa-fafa-fafafafafafa")
+            .unwrap()
+            .as_u128()
+            .to_le_bytes(),
+    );
+    let service = server.create_service(uuid);
+
+    let uuid = utilities::BleUuid::Uuid128(
+        Uuid::try_parse("3c9a3f00-8ed3-4bdf-8a39-a01bebede295")
+            .unwrap()
+            .as_u128()
+            .to_le_bytes(),
+    );
+    let writable_characteristic = service
+        .lock()
+        .create_characteristic(uuid, NimbleProperties::READ | NimbleProperties::WRITE);
+
+    writable_characteristic
+        .lock()
+        .on_read(move |v, d| {
+            ::log::info!("Read from writable characteristic: {:?} {:?}", v.value(), d);
         })
-        .unwrap();
+        .on_write(move |value, _param| {
+            ::log::info!("Wrote to writable characteristic: {:?}", value);
+        });
 
-    executor.run(|| true);
+    let uuid = utilities::BleUuid::Uuid128(
+        Uuid::try_parse("fafafafa-fafa-fafa-fafa-fafafafafafa")
+            .unwrap()
+            .as_u128()
+            .to_le_bytes(),
+    );
+
+    let ble_advertising = ble_device.get_advertising();
+    ble_advertising
+        .name("ESP32-GATT-Server-mats")
+        .add_service_uuid(uuid);
+
+    ble_advertising.start().unwrap();
+
+    loop {
+        FreeRtos::delay_ms(1000);
+    }
 }
-
-
