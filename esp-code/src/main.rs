@@ -26,8 +26,8 @@ fn main() {
 
     let mut ws2812 = Ws2812Esp32Rmt::new(0, LED_PIN).unwrap();
 
-    const INIT: RGB<u8> = RGB { r: 0, g: 0, b: 0 };
-    let pixels = [INIT; NUM_LEDS];
+    // Turn all leds off on init
+    let pixels = get_pixel_colors(Event::State(false));
     ws2812.write(pixels.into_iter()).unwrap();
 
     let ble_device = BLEDevice::take();
@@ -51,15 +51,7 @@ fn main() {
             ::log::info!("Read from writable characteristic: {:?} {:?}", v.value(), d);
         })
         .on_write(move |value, _param| {
-            let mut pixels = [INIT; NUM_LEDS];
-            for i in 0..NUM_LEDS {
-                pixels[i] = RGB {
-                    r: 255,
-                    g: 120,
-                    b: 120,
-                }
-            }
-
+            let pixels = get_pixel_colors(value.into());
             ws2812.write(pixels.into_iter()).unwrap();
 
             ::log::info!("Wrote to writable characteristic: {:?}", value);
@@ -81,4 +73,52 @@ fn main() {
 
 fn str_to_uuid(s: &str) -> BleUuid {
     BleUuid::Uuid128(Uuid::try_parse(s).unwrap().as_u128().to_le_bytes())
+}
+
+const INIT: RGB<u8> = RGB { r: 0, g: 0, b: 0 };
+
+fn get_pixel_colors(e: Event) -> [RGB<u8>; NUM_LEDS] {
+    let mut pixels = [INIT; NUM_LEDS];
+
+    match e {
+        Event::State(s) => {
+            for i in 0..NUM_LEDS {
+                pixels[i] = if !s {
+                    RGB { r: 0, g: 0, b: 0 }
+                } else {
+                    RGB { r: 0, g: 0, b: 0 }
+                }
+            }
+        }
+        Event::Brightness(_) => {}
+        Event::Color((r, g, b)) => {
+            for i in 0..NUM_LEDS {
+                pixels[i] = RGB { r, g, b }
+            }
+        }
+        Event::Other(_) => {}
+    }
+
+    pixels
+}
+
+enum Event {
+    Color((u8, u8, u8)),
+    Brightness(u8),
+    State(bool),
+    Other(u8),
+}
+
+impl From<&[u8]> for Event {
+    fn from(value: &[u8]) -> Self {
+        match value[0] {
+            0x01 => {
+                let s = value[1] == 1;
+                Event::State(s)
+            }
+            0x02 => Event::Brightness(value[1]),
+            0x03 => Event::Color((value[1], value[2], value[3])),
+            _ => Event::Other(value[1]),
+        }
+    }
 }
