@@ -51,20 +51,29 @@ type GlobalState = Arc<Mutex<DevicesState<Devices>>>;
 async fn main() -> bluer::Result<()> {
     env_logger::init();
 
-    let led_addr = Address::from_str("A4:C1:38:EC:91:32")?;
-    let service_uuid = Uuid::parse_str("000102030405060708090a0b0c0d1910").unwrap();
-    let characteristic_uuid = Uuid::parse_str("000102030405060708090a0b0c0d2b11").unwrap();
-
     let state = GlobalState::default();
 
-    let govee_leds = Devices::Govee(GoveeLed::new(
-        led_addr.clone(),
-        service_uuid,
-        characteristic_uuid,
-    ));
-    state.lock().await.add_device(led_addr, govee_leds);
+    let govee_led_addr = Address::from_str("A4:C1:38:EC:91:32")?;
+    let govee_service_uuid = Uuid::parse_str("000102030405060708090a0b0c0d1910").unwrap();
+    let govee_characteristic_uuid = Uuid::parse_str("000102030405060708090a0b0c0d2b11").unwrap();
 
-    // let esp = Devices::Esp(EspLed::new());
+    let govee_leds = Devices::Govee(GoveeLed::new(
+        govee_led_addr.clone(),
+        govee_service_uuid,
+        govee_characteristic_uuid,
+    ));
+    state.lock().await.add_device(govee_led_addr, govee_leds);
+
+    let esp_led_addr = Address::from_str("40:22:D8:EA:CB:FA")?;
+    let esp_service_uuid = Uuid::parse_str("1afc47f3-4a31-4c4e-9f54-ca1ede6e2e1f").unwrap();
+    let esp_characteristic_uuid = Uuid::parse_str("21b3e7c8-bc41-47c7-af6c-1fe47aad759f").unwrap();
+
+    let esp_leds = Devices::Esp(EspLed::new(
+        esp_led_addr.clone(),
+        esp_service_uuid,
+        esp_characteristic_uuid,
+    ));
+    state.lock().await.add_device(esp_led_addr, esp_leds);
 
     let api_router = Router::new()
         .route("/set/:addr", post(set_led))

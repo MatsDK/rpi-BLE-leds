@@ -37,10 +37,10 @@ fn main() {
         info!("Client connected: {:?}", d);
     });
 
-    let uuid = str_to_uuid("fafafafa-fafa-fafa-fafa-fafafafafafa");
+    let uuid = str_to_uuid("1afc47f3-4a31-4c4e-9f54-ca1ede6e2e1f");
     let service = server.create_service(uuid);
 
-    let uuid = str_to_uuid("3c9a3f00-8ed3-4bdf-8a39-a01bebede295");
+    let uuid = str_to_uuid("21b3e7c8-bc41-47c7-af6c-1fe47aad759f");
     let writable_characteristic = service
         .lock()
         .create_characteristic(uuid, NimbleProperties::READ | NimbleProperties::WRITE);

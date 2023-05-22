@@ -29,8 +29,9 @@ impl EspLed {
 // TOOD: use anyhow error handling
 #[async_trait]
 impl LedDevice for EspLed {
-    // TOOD: start job for sending `keep_alive` messages
     async fn connect(&mut self) -> io::Result<()> {
+        info!("Start connect to esp");
+
         Ok(())
     }
 
