@@ -83,7 +83,10 @@ async fn connect_device(device: &Device) -> bluer::Result<()> {
     let mut retries = 0;
     loop {
         match device.connect().await {
-            Ok(()) => break,
+            Ok(()) => {
+                info!("Successfully connected to {}", device.address());
+                break
+            },
             Err(err) if retries <= MAX_CONNECT_RETRIES => {
                 info!("Error while connecting to {}: {}", device.address(), &err);
                 retries += 1;
@@ -100,10 +103,12 @@ async fn find_characteristic(
     service_uuid: Uuid,
     characteristic_uuid: Uuid,
 ) -> bluer::Result<Option<Characteristic>> {
-    let _uuids = device.uuids().await?.unwrap_or_default();
+    let uuids = device.uuids().await?.unwrap_or_default();
+    info!("Advertised uuids: {uuids:?}");
 
     for service in device.services().await? {
         let uuid = service.uuid().await?;
+        info!("Checking {uuid:?}");
         if uuid == service_uuid {
             info!("Found service: {uuid}");
 

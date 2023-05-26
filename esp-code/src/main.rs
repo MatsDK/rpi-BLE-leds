@@ -57,10 +57,10 @@ fn main() {
             ::log::info!("Wrote to writable characteristic: {:?}", value);
         });
 
-    let uuid = str_to_uuid("fafafafa-fafa-fafa-fafa-fafafafafafa");
 
-    let ble_advertising = ble_device.get_advertising();
-    ble_advertising
+    let uuid = str_to_uuid("1afc47f3-4a31-4c4e-9f54-ca1ede6e2e1f");
+    let mut ble_advertising = ble_device.get_advertising();
+    ble_advertising =  ble_advertising
         .name("ESP32-GATT-Server-mats")
         .add_service_uuid(uuid);
 

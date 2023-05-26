@@ -32,6 +32,73 @@ impl LedDevice for EspLed {
     async fn connect(&mut self) -> io::Result<()> {
         info!("Start connect to esp");
 
+        if let Some(device) = &self.device {
+            if device.is_connected().await? {
+                info!("Device already connected");
+                return Ok(());
+            }
+        }
+
+        match discover_device(self.addr).await {
+            Ok(Some(device)) => {
+                self.device = Some(device);
+            }
+            Ok(None) => {
+                let err = Error::new(
+                    ErrorKind::NotFound,
+                    format!("Device {} not found", self.addr),
+                );
+                return Err(err);
+            }
+            Err(e) => {
+                let err = Error::new(
+                    ErrorKind::NotFound,
+                    format!("Error searching for {}: {e}", self.addr),
+                );
+                return Err(err);
+            }
+        }
+
+        if let Some(device) = &self.device {
+            match connect_device(device).await {
+                Ok(()) => {}
+                Err(e) => {
+                    let err = Error::new(
+                        ErrorKind::NotFound,
+                        format!("Error connecting to {}: {e}", self.addr),
+                    );
+                    return Err(err);
+                }
+            }
+
+            info!("Successfully connected to {:?}", self.device);
+
+            match find_characteristic(device, self.service_uuid, self.characteristic_uuid).await {
+                Ok(Some(characteristic)) => {
+                    self.characteristic = Some(characteristic.clone());
+                }
+                Ok(None) => {
+                    let err = Error::new(
+                        ErrorKind::NotFound,
+                        format!("Characteristic {} not found", self.characteristic_uuid),
+                    );
+                    return Err(err);
+                }
+                Err(e) => {
+                    error!("{e}");
+                    let err = Error::new(
+                        ErrorKind::NotFound,
+                        format!(
+                            "Error searching for characteristic {}: {e}",
+                            self.characteristic_uuid
+                        ),
+                    );
+                    return Err(err);
+                }
+            }
+            info!("successfully found char");
+        }
+
         Ok(())
     }
 
